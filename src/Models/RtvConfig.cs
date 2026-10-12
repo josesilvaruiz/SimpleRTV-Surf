@@ -59,4 +59,12 @@ public class RtvConfig : BasePluginConfig
     /// <summary>Minutos con 0 jugadores humanos antes de volver a <see cref="DefaultMap"/>. 0 = desactivado.</summary>
     [JsonPropertyName("IdleResetMinutes")]
     public int IdleResetMinutes { get; set; } = 30;
+
+    /// <summary>
+    /// Cuántos de los últimos mapas jugados no pueden salir en la votación, nominarse ni tocar al azar.
+    /// Si el pool no da para excluirlos todos y seguir llenando <see cref="MapsInVote"/> huecos, se
+    /// relaja solo empezando por los más antiguos. 0 = desactivado.
+    /// </summary>
+    [JsonPropertyName("RecentMapsToExclude")]
+    public int RecentMapsToExclude { get; set; } = 5;
 }

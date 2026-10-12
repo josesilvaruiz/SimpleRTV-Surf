@@ -11,6 +11,7 @@ A Rock The Vote plugin for Counter-Strike 2 built with [CounterStrikeSharp](http
 - **WASD menu** — interactive in-game menu with live vote counts next to each map option, navigated with W/S/E/R keys
 - **Chat vote mode** — players can switch to typing a number in chat with `!votemode`; preference is saved per-player in SQLite
 - **Map nominations** — players nominate maps with `!nominate`; nominated maps get priority in the vote
+- **No repeats** — the last `RecentMapsToExclude` maps played can't be voted, nominated or picked at random again; the history survives restarts
 - **Live vote scoreboard** — real-time vote counts visible during the vote (in the WASD menu and as a center-screen overlay for chat-mode players)
 - **Vote result screen** — winning map displayed on screen for 6 seconds when the vote ends
 - **Workshop map support** — handles `changelevel`, `host_workshop_map`, and `ds_workshop_changelevel`
@@ -80,7 +81,8 @@ Located at `addons/counterstrikesharp/configs/plugins/SimpleRTV/SimpleRTV.json`:
   "WorkshopCollectionId": "",
   "WorkshopCacheHours": 24,
   "DefaultMap": "surf_utopia_njv",
-  "IdleResetMinutes": 30
+  "IdleResetMinutes": 30,
+  "RecentMapsToExclude": 5
 }
 ```
 
@@ -96,6 +98,7 @@ Located at `addons/counterstrikesharp/configs/plugins/SimpleRTV/SimpleRTV.json`:
 | `WorkshopCacheHours`      | `24`             | Hours before the workshop map cache is refreshed from Steam API                                  |
 | `DefaultMap`              | `surf_utopia_njv`| Map to return to after `IdleResetMinutes` with no players (empty = disabled)                      |
 | `IdleResetMinutes`        | `30`             | Minutes with 0 human players before switching to `DefaultMap` (0 = disabled)                      |
+| `RecentMapsToExclude`     | `5`              | Last N maps played that can't be voted, nominated or picked at random (0 = disabled). Relaxed automatically if the pool is too small to still fill `MapsInVote` slots. Stored in `data/SimpleRTV/recent_maps.json` |
 
 The timelimit does not start counting on an empty map — it only starts when the first player joins, so it never votes or changes the map while the server has 0 human players.
 

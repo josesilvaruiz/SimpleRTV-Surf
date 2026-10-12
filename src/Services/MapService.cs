@@ -90,7 +90,9 @@ public class MapService
                 skipped++;
                 continue;
             }
-            if (!_maps.ContainsKey(kv.Key))
+            // Un mapa ya presente en rtv_maps.json bajo otra clave (por nombre, con el mismo id de
+            // Workshop) sería el mismo mapa dos veces en la votación.
+            if (!_maps.ContainsKey(kv.Key) && !IsSameMapAsExisting(kv.Key, kv.Value))
             {
                 _maps[kv.Key] = kv.Value;
                 added++;
@@ -99,6 +101,11 @@ public class MapService
         if (added > 0 || skipped > 0)
             _logger.LogInformation("[SimpleRTV] Merged {Count} workshop maps ({Skipped} blacklisted skipped).", added, skipped);
     }
+
+    private bool IsSameMapAsExisting(string key, MapInfo info) =>
+        _maps.Any(kv =>
+            (!string.IsNullOrEmpty(info.MapId) && info.MapId.Equals(kv.Value.MapId, StringComparison.OrdinalIgnoreCase)) ||
+            (!string.IsNullOrEmpty(info.Display) && info.Display.Equals(kv.Key, StringComparison.OrdinalIgnoreCase)));
 
     private static int RemoveKeys(Dictionary<string, MapInfo> dict, Func<string, bool> predicate)
     {

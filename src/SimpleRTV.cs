@@ -18,7 +18,7 @@ namespace SimpleRTV;
 public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
 {
     public override string ModuleName => "SimpleRTV";
-    public override string ModuleVersion => "1.3.0";
+    public override string ModuleVersion => "1.4.0";
     public override string ModuleAuthor => "josea";
     public override string ModuleDescription => "Simple RTV for CS2";
 
@@ -29,6 +29,7 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
     private RtvTracker _rtvTracker = null!;
     private MapVote _mapVote = null!;
     private NominateService _nominate = null!;
+    private MapHistory _history = null!;
 
     private readonly WasdMenuManager _wasdMenu = new();
     private PlayerPrefsDb _db = null!;
@@ -84,10 +85,23 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
         (_mapService.Maps.TryGetValue(mapKey, out var info) &&
          info.Display.Equals(Server.MapName, StringComparison.OrdinalIgnoreCase));
 
-    private string? RandomPoolKey() => _mapService.Maps.Keys
-        .Where(k => !IsCurrentMap(k))
-        .OrderBy(_ => _rng.Next())
-        .FirstOrDefault();
+    // Últimos mapas jugados que no deben volver a salir. Se relaja (empezando por los más
+    // antiguos) si el pool no da para excluirlos todos y dejar aún `mustRemain` mapas elegibles.
+    private HashSet<string> RecentlyPlayed(int mustRemain)
+    {
+        int poolSize = _mapService.Maps.Keys.Count(k => !IsCurrentMap(k));
+        int exclude = Math.Min(Config.RecentMapsToExclude, Math.Max(0, poolSize - mustRemain));
+        return _history.Recent(exclude, skip: IsCurrentMap);
+    }
+
+    private string? RandomPoolKey()
+    {
+        var recent = RecentlyPlayed(mustRemain: 1);
+        return _mapService.Maps.Keys
+            .Where(k => !IsCurrentMap(k) && !recent.Contains(k))
+            .OrderBy(_ => _rng.Next())
+            .FirstOrDefault();
+    }
 
     private void BootToRandomMap()
     {
@@ -130,6 +144,7 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
         PreloadSqliteNative();
         string dbPath = Path.Combine(ModuleDirectory, "..", "..", "data", "SimpleRTV", "prefs.db");
         _db = new PlayerPrefsDb(dbPath, Logger);
+        _history = new MapHistory(Path.Combine(ModuleDirectory, "..", "..", "data", "SimpleRTV", "recent_maps.json"), Logger);
         _workshop = new WorkshopService(Logger);
 
         RegisterListener<Listeners.OnMapStart>(OnMapStart);
@@ -228,6 +243,7 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
 
         _mapService.SetBlacklist(Config.BlacklistedWorkshopIds, Config.BlacklistedMapNames);
         _mapService.Load(GetMapsFilePath());
+        RecordPlayedMap();
 
         if (Config.RtvDelaySeconds > 0)
             AddTimer(Config.RtvDelaySeconds, () => _rtvAllowed = true, TimerFlags.STOP_ON_MAPCHANGE);
@@ -244,6 +260,16 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
         AddTimer(6f, BootToRandomMap, TimerFlags.STOP_ON_MAPCHANGE);
         StartIdleResetTimer();
 
+    }
+
+    // Apunta el mapa que acaba de cargar en el historial. La clave viene del último cambio hecho
+    // por este plugin (las entradas del Workshop van por id y su nombre real puede no coincidir
+    // con el título); si no hay (arranque, recarga), se busca el nombre del mapa en el pool.
+    private void RecordPlayedMap()
+    {
+        string? key = _mapService.LastRequestedKey ?? _mapService.ResolveKey(Server.MapName);
+        if (key == null) return;
+        _history.Record(key);
     }
 
     // ── Servidor vacío un rato → volver al mapa por defecto ────────────────────
@@ -441,8 +467,9 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
             return;
         }
 
+        var recent = RecentlyPlayed(mustRemain: Config.MapsInVote);
         var available = _mapService.Maps
-            .Where(kv => !IsCurrentMap(kv.Key))
+            .Where(kv => !IsCurrentMap(kv.Key) && !recent.Contains(kv.Key))
             .ToList();
 
         if (available.Count == 0) return;
@@ -583,8 +610,9 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
 
         // Nominated maps take priority within their own category; remaining slots per
         // category are filled randomly (see BuildCandidateList).
+        var recentlyPlayed = RecentlyPlayed(mustRemain: Config.MapsInVote);
         var nominatedKeys = _nominate.GetNominatedMaps()
-            .Where(k => !IsCurrentMap(k))
+            .Where(k => !IsCurrentMap(k) && !recentlyPlayed.Contains(k))
             .ToList();
 
         var candidates = BuildCandidateList(nominatedKeys);
@@ -619,9 +647,10 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
     }
 
     // Compone la votación: las nominaciones tienen prioridad y el resto de huecos
-    // (Config.MapsInVote) se rellena al azar evitando repetir lo mostrado en votaciones
+    // (Config.MapsInVote) se rellena al azar. Quedan fuera los últimos mapas jugados
+    // (RecentMapsToExclude) y, dentro de lo que queda, se evita repetir lo mostrado en votaciones
     // recientes — hasta que el pool restante no llegue para rellenar los huecos, momento en el
-    // que se reinicia el historial en vez de ofrecer menos mapas de los pedidos.
+    // que se reinicia ese historial de "ofrecidos" en vez de ofrecer menos mapas de los pedidos.
     private List<KeyValuePair<string, MapInfo>> BuildCandidateList(List<string> nominatedKeys)
     {
         var result = nominatedKeys
@@ -633,8 +662,10 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
         int remaining = Config.MapsInVote - result.Count;
         if (remaining > 0)
         {
+            var recentlyPlayed = RecentlyPlayed(mustRemain: Config.MapsInVote);
             var pool = _mapService.Maps
-                .Where(kv => !IsCurrentMap(kv.Key) && !result.Any(r => r.Key == kv.Key))
+                .Where(kv => !IsCurrentMap(kv.Key) && !recentlyPlayed.Contains(kv.Key)
+                             && !result.Any(r => r.Key == kv.Key))
                 .ToList();
             var freshPool = pool.Where(kv => !_recent.Contains(kv.Key)).ToList();
 
@@ -723,14 +754,8 @@ public class SimpleRtvPlugin : BasePlugin, IPluginConfig<RtvConfig>
 
         if (targetMap == null)
         {
-            var random = _mapService.Maps
-                .Where(kv => !IsCurrentMap(kv.Key))
-                .OrderBy(_ => _rng.Next())
-                .FirstOrDefault();
-
-            if (random.Key == null) return;
-
-            targetMap = random.Key;
+            targetMap = RandomPoolKey();
+            if (targetMap == null) return;
             PrintToAll("rtv.timelimit_no_vote");
         }
         else
